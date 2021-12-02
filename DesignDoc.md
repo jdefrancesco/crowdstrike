@@ -1,78 +1,102 @@
-# CrowdStrike Producer/Consumer Task Design Document - PREDRAFT
+# CrowdStrike Producer/Consumer Task Design Document
 
-## Design Problem:
+## Challenge Overview:
 
 * Design a system that consists of two applications; one acts as a producer, the other a consumer.
 * The two applications should communicate through N  _shared buffers_, where N can be configured by user.
 * Shared buffers have a maximum size of 1024 bytes.
+* The producer will read sentences from a file then place it in a shared buffer for the consumer to process.
+* The consumer should be able to handle invalid data gracefully and continue processing.
+* The producer begins execution first, the consumer second.
 
-### Producer
+This is essentially the "Bounded Buffer Problem", better knowns as "Producer/Consumer Problem". The primary
+challenge is for the two programs to efficiently work in harmony to process data of some sort. Since this
+problem deals with concurrency, we must ensure safe communication between the producer and the consumer.
+We want to avoid things such as: deadlock situations, race conditions, and inefficient processing.
 
-Producer will do the following:
+A primary decision that needs to be made is the method used for IPC. The requirements document specifies we wish to
+maximize throughput, so we want a fast IPC mechanism that is well supported by most platforms. My solution will target POSIX
+systems such as macOS/Linux. This solution will utilize POSIX Shared Memory for IPC; Windows systems support a version of
+shared memory as well, so porting this solution to a Windows system shouldn't be too difficult.
 
-1. Read an input file containing any number of lines of text.
-2. Populate shared buffers with the sentences read from file. **NOTE:** Each sentence
-corresponds to a line read from the text file.
-3. Print each sentence to console after we add to buffer.
+## CSPROD (Producer)
+
+### Short Description
+
+csprod, the executable which acts as the producer, has the following responsibilities:
+
+1. Open a file for input, sequentially read each line of text. The line read will correspond to one sentence.
+2. The sentence read from the file should be formatted with the  sentence length prepended to sentence data.
+> Ex:
+> Let the example line read from a file be called L, L = "Hello, world!"
+> We insert the following into the shared buffer: `[length(L)]["Hello, world!"]`
+3. Populate shared buffer with **one or more** sentences; provided they fit into the shared buffer (size 1024).
+4. On a new line, print out the sentence to the console.
+
+csprod takes two command line arguments. The first is the file it wished to process, the second is the number
+of shared buffers to create.
+
+### ASSUMPTIONS:
+
+#### A1
+
+Each sentence corresponds to exactly one line read from the text file. So I will assume a file contain five
+lines would be formatted in the following way:
+
+*FileToRead.txt:*
+
+```txt
+Hello, my name is joey.
+This is line two.
+This is line three.
+Is this real life?
+Line five.
+```
+#### A2
+
+The maximum length of a given sentence found in the input file is 256. I did some "back of the envelope" calculations with numbers
+I grabbed from google which states your average sentence is about 75-100 characters. With shared buffer size being 1024, I figured
+I would  be conservative and allow longer sentences. The length is still short enough to fit four sentences in a shared buffer if possible.
+
+#### A3
+
+A valid sentence will be delimited by standard punctuation:
+
+* Period
+* Question mark
+* Exclamation
+
 
 **NOTE: Producer will be started first.**
 
 ### Consumer
 
 The consumer reads sentences from shared buffers. After doing so it should print
-all the sentences which contain a substring S, where S is a specified parameter to the consumer.
+all the sentences which contain a substring S, where S is a specified command line argument given to the consumer.
 **NOTE**: S may contains spaces!
 
 **KEY POINTS:** The shared buffer data shouldn't be blindly trusted. We may assume an attack could be
 attempting to alter the shared buffers. The consumer needs to safely process the input data. If the consumer
 finds faulty data, we can halt processing and revert the buffer to a clean state for reuse int he future.
 
-What does it mean for buffer entry data to be invalid?:
+Invalid Data:
 
-I am going to assume it means the entry header
-containing the string length doesn't match the true size of the string data. Therefore its imperative we
-don't blindly trust the `sent_len` header of an entry.
+1. Header length doesn't match the length of the sentence appended.
+2. The buffer doesn't contain ASCII printable characters.
 
 **NOTE: Consumer will be started second.**
 
 ### Shared Buffer and Buffer Entry Details:
 
-There will be N *shared buffers*. The shared buffers could be one of several IPC
-mechanisms. This Producer/Consumer lends itself nicely to FIFO buffers; because
-there is one producer and one consumer. Costly synchronization mechanisms can be avoided
-as well. This will help us get better performance.
 
-```c
-struct shared_buff {
- // FIFO buffs....
-}
+## POSIX SHMEM (IPC Mechanism)
 
-```
+Originally I had thought FIFO would be a good fit for this problem. It is simple to use and for the most part
+we don't need to worry about synchronization/concurrency issues as the kernel helps us avoid race conditions,
+deadlocks, etc. However, we want to maximize throughput and provide the fastest performance; POSIX Shared Memory
+allows for this.
 
-
-Each entry in the shared buffers should have the following format:
-
-
-```c
-struct buffer_entry {
-    unsigned long sent_len;
-    char sentence[];
-}
-```
-
-* We want to fill the shared buffers with as many sequential entries as possible.
-* Because the FIFO, if multiple messages are inside our shared buffer, we can skip a delimiter because we have
-the sent_len prepended to the sentence.
-
-------------
-
-## DECISIONS TO PONDER:
-
-1. What IPC mechanism is most suitable for this problem? We want to optimize for throughput according to docs.
-2. What synchronization mechanisms would be most efficient? We could use a pattern where there is a monitor as mutual exclusion
-is implicit and we don't need locks or anything to protect critical sections.
-3. If consumer stumbled upon invalid data from a shared buffer, what actions should it take (clear for other entry and print
-a warning message to user?)
+---------------
 
 ## SYNCHRONIZATION:
 
@@ -87,31 +111,17 @@ a warning message to user?)
 1. Design choices favor throughput
 2. Consumer shouldn't crash after its initialization.
 3. Producer starts first, exits when all sentences are processed by consumer.
-4. Consumer starts second, doesn't terminate (like a daemon)
+4. Consumer starts second, doesn't terminate.
 
-## MY QUESTIONS:
+## MY QUESTIONS (ANSWERED):
 
-1. "shared buffers" Can be buffers of whichever IPC mechanism I choose? Or do you want me to use shared memory?
-2. What OS can assume this will run on? Is it safe to say it with be a POSIX compliant machine like macOS/Linux?
-3. What C data model can I assume we are using? Will this be a 64bit system using LP64? Is it safe for me to assume
-`unsigned long` will be 64 bits (uint64_t)?
-4. The directions state to create two applications but I want to be clear. You want TWO independent applications written
-and not simply one that forks or creates a thread to act as the consumer or producer correct? That is, my solution
-will consist of two C/C++ programs: consumer.c and producer.c?
-5. Is there a specific MAX number of shared buffers you would like to enforce? Am I free to dynamically choose and set limits
-for the number of shared buffers? The OS has resource limits I will need to abide by for certain, but are there other limits
-I might consider?
-6. What exactly should I consider an "invalid" buffer entry? I will consider an entry invalid if the size listed in the header and
-the sentence length don't match up. Are there any more cases I should consider? Are certain words/sentences not allowed?
-If we are just printing the sentences out to STDOUT of a console, there shouldn't be too much to worry about aside perhaps
-an attacker inserting VT100 escape sequences or other terminal patterns to mess up terminal output. Is that something
-we care about?
-7. Am I limited in choice to which IPC mechanism I choose? Different OS offer different ones; although they all usually have
-the basic ones that can be used for a task like this. If the solution has to be platform independent, it narrows choices.
-Can I assume this is running on Linux or MacOS?
-8. Can I assume the producer is reading a text file where each line is one sentence? do sentences span multiple lines?
-9. Is there a maximum line length I can assume for the producer when reading a file? Shared buffers are 1024 bytes, we use a header
-to indicate size of the message that's uint64_t, can we have a sentence that long? If not, can I make the size header a uint16_t as
-that is all we would need to represent the size of a sentence of max length < 1024?
-
+1. "shared buffers" is whatever I interpret it to be. So FIFO or POSIX SHMEM
+2. Assuming macOS/Linux is fine. Just note this in build instructions.
+3. Make code robust as possible. Design in a way that that it works for 32bit and 64bit systems.
+4. Constraints on number of buffers other resources is left to my discreation.
+5. Invalid buffers could include: mismatch header size and sentence length, non-printable ascii characters, etc..
+6. IPC Mechanism I choose can be any of the POSIX mechanisms. Just state that in build as you do in question two.
+7. Can I assume the producer is reading a text file where each line is one sentence? do sentences span multiple lines?
+8. It seems safe to assume each line has one sentence.
+9. Maximum size of line isn't defined in the problem, this is left to my discretion.
 

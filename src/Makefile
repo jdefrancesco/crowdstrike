@@ -1,7 +1,7 @@
 CC = clang
 
 CFLAGS = -std=c11 -pedantic -Wall -Wextra -march=native -ggdb3
-LDFLAGS =
+LDFLAGS = -lrt
 
 all: csprod csconsume
 
