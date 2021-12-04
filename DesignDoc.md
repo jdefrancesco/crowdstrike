@@ -10,14 +10,16 @@
 * The producer begins execution first, the consumer second.
 
 This is essentially the "Bounded Buffer Problem", better knowns as "Producer/Consumer Problem". The primary
-challenge is for the two programs to efficiently work in harmony to process data of some sort. Since this
-problem deals with concurrency, we must ensure safe communication between the producer and the consumer.
+challenge is for the two programs to efficiently process data and work in harmony. Since this
+problem deals with concurrency, we must ensure safe communication between the producer and consumer.
 We want to avoid things such as: deadlock situations, race conditions, and inefficient processing.
 
-A primary decision that needs to be made is the method used for IPC. The requirements document specifies we wish to
-maximize throughput, so we want a fast IPC mechanism that is well supported by most platforms. My solution will target POSIX
-systems such as macOS/Linux. This solution will utilize POSIX Shared Memory for IPC; Windows systems support a version of
-shared memory as well, so porting this solution to a Windows system shouldn't be too difficult.
+A primary decision that needs to be made is the method used for IPC. The requirements document specifies that we should optimize for
+maximize throughput. We want a fast IPC mechanism that is well supported by most platforms. Since these two programs are built for POSIX
+systems such as macOS/Linux, I chose POSIX Shared Memory for communication between producer and consumer. POSIX Shared Memory is an efficient
+IPC mechanism as it allows us to "sidestep" the kernel when data exchanges take place. This is because we essentially use `mmap()` to create
+page table entries in both processes that point to the memory region we wish to share. Although this solution targets POSIX systems, Windows NT
+provides similar memory mapping and shared memory primitives; adding Windows support would not be too difficult.
 
 ## CSPROD (Producer)
 
@@ -66,7 +68,6 @@ A valid sentence will be delimited by standard punctuation:
 * Question mark
 * Exclamation
 
-
 **NOTE: Producer will be started first.**
 
 ### Consumer
@@ -104,7 +105,7 @@ allows for this.
     * No valid sentence is lost.
     * All shared buffers with valid sentences will be processed
 2. Possible re-use of shared buffers (if needed)
-3. Can use OS constructs/primitives (What OS can I assume?)
+3. Can use OS constructs/primitives
 
 ## Additional Comments From CS Document:
 
@@ -118,10 +119,10 @@ allows for this.
 1. "shared buffers" is whatever I interpret it to be. So FIFO or POSIX SHMEM
 2. Assuming macOS/Linux is fine. Just note this in build instructions.
 3. Make code robust as possible. Design in a way that that it works for 32bit and 64bit systems.
-4. Constraints on number of buffers other resources is left to my discreation.
-5. Invalid buffers could include: mismatch header size and sentence length, non-printable ascii characters, etc..
+4. Constraints on number of buffers other resources is left to my discretion.
+5. Invalid buffers could include: mismatch header size and sentence length, non-printable ASCII characters, etc..
 6. IPC Mechanism I choose can be any of the POSIX mechanisms. Just state that in build as you do in question two.
-7. Can I assume the producer is reading a text file where each line is one sentence? do sentences span multiple lines?
+7. Can I assume the producer is reading a text file where each line is one sentence? Do sentences span multiple lines?
 8. It seems safe to assume each line has one sentence.
 9. Maximum size of line isn't defined in the problem, this is left to my discretion.
 
