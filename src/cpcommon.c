@@ -3,10 +3,9 @@
 
 #include "cpcommon.h"
 
-// Function:    create_shared_buffer
-// Descriptiom: Creates a shared memory buffer via call to mmap with shm descriptor.
-//              POSIX shmem is our IPC mechanism.
-// Returns:     A void pointer to new shared memory buffer.
+
+// Creates a shared memory buffer via call to mmap identified
+// by our POSIX shm file descriptor, our IPC mechanism of choice.
 void * create_shared_buffer(int shm_fd, size_t buff_size, access_t mem_type)
 {
     assert(shm_fd != -1);
