@@ -1,6 +1,6 @@
 CC = clang
 CFLAGS = -std=c17 -pedantic -Wall -Wextra -march=native -g3 -Og -fno-omit-frame-pointer
-LDFLAGS = -lrt
+LDFLAGS = -lrt -lpthreads
 
 all: csprod csconsume
 

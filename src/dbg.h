@@ -6,10 +6,10 @@
 
 #ifdef NDEBUG
 // No debug messages.
-#define dbg_print(msg, ...)
+#define dbg_print(msg)
 #else
-#define dbg_print(msg, ...) fprintf(stderr, RED "[DEBUG]: " RESET msg " :(%s:%s:%d)\n", ##__VA_ARGS__, \
-        __FILE__, __LINE__)
+#define dbg_print(msg) fprintf(stderr, RED "[DEBUG]: " RESET msg " :(%s:%s:%d)\n", \
+        __func__, __FILE__, __LINE__)
 #endif
 
 // Flag for turning assertions on or off.
