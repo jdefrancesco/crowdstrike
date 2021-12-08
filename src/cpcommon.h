@@ -27,14 +27,15 @@
 // total size of a sentence_t will be 256 bytes maximum given sentence_length header
 // is going to be 8 bytes: 256 (max size of struct) - 8 (sentence length preceding data) - 1 (nul)
 // byte that delimits the string. This means one shared buffer can hold 4 sentences that are
-// max length.
+// max length. Note, we keep null delimiter as it will still act as a sentence seperator;
+// this is so we can call our strlen() and make sure what we compute matches the header.
 #define MAX_SENTENCE_LENGTH 247
 
 /* Holds a sentence which can be placed in a shared buffer. */
 typedef struct sentence_t {
-    unsigned long sentence_length; // Length of sentence (Maximum size of 256)
+    unsigned long sentence_length; // Length of sentence (Maximum size of 247)
 
-    char sentence[];               // Flex array member with actual sentence data. Max length is 255.
+    char sentence[];               // Flex array member with actual sentence data. Max length is 247.
                                    // bytes but we don't want to allocate what we don't need.
 } sentence_t;
 
@@ -46,8 +47,8 @@ typedef struct sentence_t {
 
 /* Structure to manage shared buffers. */
 typedef struct shm_mgr_t {
-   uint32_t sb_count;          // The number of shared buffers (supplied by user).
-   uint32_t buffer_idx;               // Buffer currently being accessed.
+   size_t sb_count;          // The number of shared buffers (supplied by user).
+   size_t buffer_idx;               // Buffer currently being accessed.
    sentence_t *sh_sentence_buffers[SHARED_MAX_BUFFERS];  // Stores our shared buffers.
 } shm_mgr_t;
 
@@ -61,6 +62,7 @@ typedef enum {
 
 
 
+#define SHM_THREAD_NAME "/cs-thrd-"
 
 
 /* Enum representing state a thread may be in. */
@@ -72,8 +74,8 @@ typedef enum {
 
 /* Thread pool object to manage worker threads */
 typedef struct thread_pool_t {
-    pthread_t tid;
-    thread_state_t state;
+    pthread_t *tp;
+    size_t thread_count;
 } thread_pool_t;
 
 
