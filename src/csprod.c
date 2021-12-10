@@ -59,6 +59,7 @@ print_error(const char *err_msg)
     return;
 }
 
+// TODO: Add signal handler!
 void
 signal_handler(int sig)
 {
@@ -81,6 +82,10 @@ shm_worker_thread(void *arg) {
     // We dequeue a line from the queue into this temp buffer.
     char temp_line[MAX_LINE_SIZE] = {0};
 
+
+    // If fail to dequeue 10 times, break loop
+    size_t queue_fail = 0;
+
     // Construct sem mutex name.
     snprintf(sem_mtx_name, (sizeof(sem_mtx_name)-1), SEM_MUTEX_NAME "%zu", i);
     // Construct shm name. Note, this won't show in the file system
@@ -88,11 +93,11 @@ shm_worker_thread(void *arg) {
     printf("Hello, my name is %s\n", shm_name);
 
     // Create sem mtx we use for sync. between different processes.
-    if ((shbuff_sem_mtx = sem_open(sem_mtx_name, O_CREAT, 0660, 0))
-            == SEM_FAILED){
-        perror("sem_open");
-        goto Exit;
-    }
+    /* if ((shbuff_sem_mtx = sem_open(sem_mtx_name, O_CREAT, 0660, 0)) */
+    /*         == SEM_FAILED){ */
+    /*     perror("sem_open"); */
+    /*     goto Exit; */
+    /* } */
 
     errno = 0;
     if(shm_unlink(shm_name) == -1) {
@@ -138,13 +143,15 @@ shm_worker_thread(void *arg) {
     dbg_print("create_shared_buffer called success.");
 
     for (;;) {
-        dbg_print("In infinite loop");
-        if (squeue_dequeue(sq, temp_line)) {
-            printf("[+] Successfully read line out of queue: %s\n", temp_line);
+
+        if (!squeue_dequeue(sq, temp_line)) {
+            printf("[+] Queue is currently empty.\n");
+            queue_fail++;
+            if (queue_fail == 10) {
+                printf("thread - enqueue failed ten times. breaking\n");
+                break;
+            }
         }
-    //  pthread mtx lock(sq)
-    //  get item from shared queue
-    //  pthread mtx unlock
     //
     //  if (!holding sem_mtx)
     //      sem_wait()
@@ -163,6 +170,7 @@ shm_worker_thread(void *arg) {
 
 Exit:
 
+    if (shm_addr) munmap(shm_addr, SHARED_BUFFER_SIZE);
     shm_unlink(shm_name);
     if (shm_fd) close(shm_fd);
     return NULL;
@@ -192,8 +200,6 @@ int main(int argc, char **argv) {
     // Will store the line we read from the file.
     char line[MAX_LINE_SIZE] = {0};
 
-    // Concurrency safe sentence queue.
-    squeue_t *s_queue = NULL;
 
     if (argc != 3) {
         print_usage(argv[0]);
@@ -207,7 +213,6 @@ int main(int argc, char **argv) {
         print_error("Invalid value for <SHARED_BUFFER_COUNT>");
         goto ExitFail;
     }
-
     // Ensure shared buffer count is within our range (1-16 inclusive).
     if (shared_buff_count > SHARED_MAX_BUFFERS) {
         print_error("Buffer count out of range, must be a value of 1-16, inclusive.");
@@ -257,7 +262,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "[!] ftruncate fd not open for writing\n");
         }
         perror("ftruncate");
-        return EXIT_FAILURE;
+        goto ExitFail;
     }
 
 
@@ -269,7 +274,7 @@ int main(int argc, char **argv) {
             MAP_SHARED, shm_fd, 0);
     if (shm_addr == MAP_FAILED) {
         perror("mmap");
-        return EXIT_FAILURE;
+        goto ExitFail;
     }
     close(shm_fd);
 
@@ -281,15 +286,15 @@ int main(int argc, char **argv) {
     sm->buffer_idx = 0; // Currently unused.
     // TODO: Unlock sem
 
-    // Create thread pool. One thread per shared buffer.
+    // Allocate space for thread pool.
     tp = calloc(sm->sb_count, sizeof(pthread_t));
     if (tp == NULL) {
         perror("calloc");
         goto ExitFail;
     }
 
+    // Create thread pool. One thread per shared buffer.
     for (size_t i = 0; i < sm->sb_count; i++) {
-        printf("starting thread %zu\n", i);
         int ret = pthread_create(&tp[i], NULL, shm_worker_thread, (void *)i);
         if (ret != 0) {
             print_error("Problem creating a thread.");
@@ -300,46 +305,41 @@ int main(int argc, char **argv) {
     dbg_print("All threads created");
     dbg_print("Initialize squeue");
     // Initilize our sentence queue.
-    s_queue = squeue_init();
-    if (s_queue == NULL) {
+    sq = squeue_init();
+    if (sq == NULL) {
         fprintf(stderr, "[!] Could not create sentence queue!\n");
         goto ExitFail;
     }
 
-    dbg_print("Queue initialized");
 
-    // Will use fgets() as opposed to getline() because we are setting strict requirements
-    // for line size.
+    // Process input file one line at a time.
     while(fgets(line, sizeof(line), input_file) != NULL) {
         // Strip off new line
         char *nl = strchr(line, '\n');
         if (nl) {
             *nl = '\0';
         }
-
-        // 1. Create new sqnode
-        squeue_enqueue(s_queue, line);
-        // 2. Acquire MTX
-        // 3. enqueue_sentence(sqnode)
-        // 4. Unlock MTX
-        //
-
-        // Output line to console.
         printf("%s\n", line);
+
+
+        if(!squeue_enqueue(sq, line)) {
+            fprintf(stderr, "[!] Failed to add line to queue!\n");
+        }
 
         // Clear line buffer for new sentence.
         memset(line, '\0', sizeof(line));
 
     }
 
+    printf("[!] Done processing file!\n");
 
     // Check for any errors while processing file stream.
     if (ferror(input_file)) {
-        print_error("Error on input_file");
+        print_error("Error on input_file.");
     }
 
     if (!feof(input_file)) {
-        print_error("Unable to process entire file");
+        print_error("Unable to process entire file.");
     }
     clearerr(input_file);
 
@@ -348,24 +348,28 @@ int main(int argc, char **argv) {
     for (size_t i = 0; i < sm->sb_count; i++) {
         pthread_join(tp[i], NULL);
     }
-
-    squeue_destroy(sq);
-
     dbg_print("threads all finished");
 
-    // Clean up.
+    free(tp);
+    tp = NULL;
+
+    squeue_destroy(sq);
+    sq = NULL;
+
     shm_unlink(SHM_MGR_NAME);
     fclose(input_file);
-    free(tp);
+
 
     if (munmap(shm_addr, sizeof(shm_mgr_t)) == -1) {
         perror("munmap");
-        return EXIT_FAILURE;
+        shm_addr = 0;
+        goto ExitFail;
     }
 
     return EXIT_SUCCESS;
 
 ExitFail:
+    if (sq) squeue_destroy(sq);
     if (shm_fd) shm_unlink(SHM_MGR_NAME);
     if (input_file) fclose(input_file);
     if (tp) free(tp);

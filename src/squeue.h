@@ -21,6 +21,8 @@ typedef struct sqnode_t {
 } sqnode_t;
 
 
+// squeue_t is a simple concurrency safe FIFO queue with rather
+// coarse grain locking. This can be improved upon.
 typedef struct squeue_t {
     sqnode_t *back;
     sqnode_t *front;
@@ -30,10 +32,9 @@ typedef struct squeue_t {
 
     bool is_empty;
 
-    // This flag, when set by the producer, indicates
-    // that processing should stop and threads should clean
-    // up, or that all work has been completed.
-    bool stop;
+    // This flag, when set by the producer, indicate that
+    // processing is finished and threads should clean up.
+    bool finished;
 
     // Out mtx to make the queue concurrency safe.
     pthread_mutex_t *lock;
@@ -59,5 +60,9 @@ size_t squeue_count(const squeue_t *q);
 
 // Remove squeue and free associated memory.
 void squeue_destroy(squeue_t *q);
+
+// Set finished field to signal to consumers no more
+// entries will be added to the queue.
+void squeue_setfinished(squeue_t *q);
 
 #endif

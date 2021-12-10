@@ -9,13 +9,12 @@
 #include "cpcommon.h"
 #include "dbg.h"
 
-// Make queue concurrency safe.
+// Make queue thread-safe.
 static pthread_mutex_t queue_lock;
 
-// Create new sentence node.
+// Create new sentence/line node.
 sqnode_t * new_sqnode(char *sentence_str)
 {
-
     size_t s_len = strlen(sentence_str);
     if (s_len > (MAX_SENTENCE_LENGTH+1)) {
         fprintf(stderr, "[!] String of size %zu exceeds maximum.\n",
@@ -35,7 +34,8 @@ sqnode_t * new_sqnode(char *sentence_str)
     return node;
 }
 
-// Create sentence queue.
+
+// Create squeue, our sentence queue.
 squeue_t * squeue_init(void)
 {
     squeue_t *q = calloc(1, sizeof(squeue_t));
@@ -52,10 +52,11 @@ squeue_t * squeue_init(void)
     q->back = NULL;
     q->is_empty = true;
     q->entry_count = 0;
-    q->stop = false;
+    q->finished = false;
 
     return q;
 }
+
 
 // Add sentence node to the back of the queue.
 bool squeue_enqueue(squeue_t *q, char *sentence_str)
@@ -86,11 +87,10 @@ bool squeue_enqueue(squeue_t *q, char *sentence_str)
         q->back = tmp_node;
         q->entry_count++;
     }
-    pthread_mutex_lock(q->lock);
+    pthread_mutex_unlock(q->lock);
     // End critical section.
 
     return true;
-
 }
 
 
@@ -112,6 +112,9 @@ bool squeue_dequeue(squeue_t *q, char *sentence_buff)
         q->back = NULL;
 
     q->entry_count--;
+    if (q->entry_count == 0) {
+        q->is_empty = true;
+    }
     pthread_mutex_unlock(q->lock);
     // End of critical section.
 
@@ -144,7 +147,16 @@ size_t squeue_count(const squeue_t *q)
     return t_entry_count;
 }
 
+// Set finished queue field member as a signal to consuming
+// threads that nothing more will go onto queue.
+void squeue_setfinished(const squeue_t *q)
+{
+    pthread_mutex_lock(q->lock);
+    q->finsihed = true;
+    pthread_mutex_unlock(q->lock);
+}
 
+// Destructor for queue.
 void squeue_destroy(squeue_t *q)
 {
     pthread_mutex_lock(q->lock);
