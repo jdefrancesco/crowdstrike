@@ -12,6 +12,8 @@
 // Make queue thread-safe.
 static pthread_mutex_t queue_lock;
 
+
+
 // Create new sentence/line node.
 sqnode_t * new_sqnode(char *sentence_str)
 {
@@ -152,9 +154,22 @@ size_t squeue_count(const squeue_t *q)
 void squeue_setfinished(const squeue_t *q)
 {
     pthread_mutex_lock(q->lock);
-    q->finsihed = true;
+    q->finished = true;
     pthread_mutex_unlock(q->lock);
 }
+
+
+// Set finished flag.
+bool squeue_done(const squeue_t *)
+{
+    bool finished = false;
+    pthread_mutex_lock(q->lock);
+    finished = q->finished;
+    pthread_mutex_unlock(q->lock);
+
+    return finished;
+}
+
 
 // Destructor for queue.
 void squeue_destroy(squeue_t *q)

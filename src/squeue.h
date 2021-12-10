@@ -65,4 +65,8 @@ void squeue_destroy(squeue_t *q);
 // entries will be added to the queue.
 void squeue_setfinished(squeue_t *q);
 
+// Returns true if the finished flag is set. This means no
+// more data will be placed on queue by main thread.
+bool squeue_done(squeue_t *q);
+
 #endif

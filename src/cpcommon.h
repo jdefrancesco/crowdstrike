@@ -20,7 +20,9 @@
 #define SHARED_MAX_BUFFERS 16
 // Mutex for synchronizing producer/consumer buffer access.
 #define SEM_MUTEX_NAME "/crowdstrike-sem"
-
+// Name template for creating semaphore used between threads
+// from different processes.
+#define SEM_MTX_THREAD "/cs-sem-"
 
 // Doing a few "back of the envelope" calculations and research, your average sentence is around
 // 75-100 characters long. I chose 247 as the max length of a sentence. This was chosen so the
@@ -52,7 +54,7 @@ typedef struct sentence_t {
 /* Structure to manage shared buffers. */
 typedef struct shm_mgr_t {
    size_t sb_count;          // The number of shared buffers (supplied by user).
-   size_t buffer_idx;               // Buffer currently being accessed.
+   size_t buffer_idx;        // Buffer currently being accessed.
 } shm_mgr_t;
 
 
@@ -68,22 +70,13 @@ typedef enum {
 #define SHM_THREAD_NAME "/cs-thrd-"
 
 
-/* Enum representing state a thread may be in. */
-typedef enum {
-    TS_ALIVE,
-    TS_TERMINATED, // Thread terminated but not yet joined.
-    TS_FINISHED,   // Thread that has terminated, and has joined.
-} thread_state_t;
-
-/* Thread pool object to manage worker threads */
-typedef struct thread_pool_t {
-    pthread_t *tp;
-    size_t thread_count;
-} thread_pool_t;
-
 
 // Creates a shared memory buffer via call to mmap identified
 // by our POSIX shm file descriptor, our IPC mechanism of choice.
 void * create_shared_buffer(int shm_fd, size_t buff_size);
+
+// Hex dump a buffer of data. Will use this to debug if I need to see
+// contents of shared buffer.
+void hex_dump(const uint8_t *data, size_t size);
 
 #endif // __CPCOMMON_H
