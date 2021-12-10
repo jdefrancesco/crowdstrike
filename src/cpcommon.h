@@ -31,6 +31,10 @@
 // this is so we can call our strlen() and make sure what we compute matches the header.
 #define MAX_SENTENCE_LENGTH 247
 
+// Maximum size of a line we could potentially read out of a file.
+// This is less than what the sentence length can be.
+#define MAX_LINE_SIZE 256
+
 /* Holds a sentence which can be placed in a shared buffer. */
 typedef struct sentence_t {
     unsigned long sentence_length; // Length of sentence (Maximum size of 247)
@@ -49,7 +53,6 @@ typedef struct sentence_t {
 typedef struct shm_mgr_t {
    size_t sb_count;          // The number of shared buffers (supplied by user).
    size_t buffer_idx;               // Buffer currently being accessed.
-   sentence_t *sh_sentence_buffers[SHARED_MAX_BUFFERS];  // Stores our shared buffers.
 } shm_mgr_t;
 
 
@@ -81,6 +84,6 @@ typedef struct thread_pool_t {
 
 // Creates a shared memory buffer via call to mmap identified
 // by our POSIX shm file descriptor, our IPC mechanism of choice.
-void * create_shared_buffer(int shm_fd, size_t buff_size, access_t mem_type);
+void * create_shared_buffer(int shm_fd, size_t buff_size);
 
 #endif // __CPCOMMON_H

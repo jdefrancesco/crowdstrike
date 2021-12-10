@@ -11,6 +11,7 @@
 #include <stdarg.h>
 
 #include <unistd.h>
+#include <signal.h>
 #include <errno.h>
 #include <unistd.h>
 #include <semaphore.h>
@@ -21,15 +22,18 @@
 
 #include "cpcommon.h"
 #include "dbg.h"
+#include "squeue.h"
 
-#define MAX_LINE_SIZE 256
 
 
 // Mutex to used to to make sentence queue thread safe.
 // This a lazy solution because of time constraints.
 // Normally, I would make a full thread-safe queue interface.
-static pthread_mutex_t sq_mtx = PTHREAD_MUTEX_INITIALIZER;
+/* static pthread_mutex_t sq_mtx = PTHREAD_MUTEX_INITIALIZER; */
+/* static pthread_cond_t sq_cond = PTHREAD_COND_INITIALIZER; */
 
+// Our sentence queue.
+static squeue_t *sq = NULL;
 
 // Show usage of command.
 static void
@@ -55,60 +59,113 @@ print_error(const char *err_msg)
     return;
 }
 
+void
+signal_handler(int sig)
+{
+    (void) sig;
+    // Signal handler.
+}
 
 static void *
 shm_worker_thread(void *arg) {
+
     size_t i = (size_t) arg;
     int shm_fd = 0;
     char shm_name[256] = {0};
     void *shm_addr = NULL;
 
+    // Semaphore mutex name used between two processes.
+    char sem_mtx_name[256] = {0};
+    sem_t *shbuff_sem_mtx = NULL;
+
+    // We dequeue a line from the queue into this temp buffer.
+    char temp_line[MAX_LINE_SIZE] = {0};
+
+    // Construct sem mutex name.
+    snprintf(sem_mtx_name, (sizeof(sem_mtx_name)-1), SEM_MUTEX_NAME "%zu", i);
     // Construct shm name. Note, this won't show in the file system
     snprintf(shm_name, (sizeof(shm_name)-1), SHM_THREAD_NAME "%zu", i);
     printf("Hello, my name is %s\n", shm_name);
 
+    // Create sem mtx we use for sync. between different processes.
+    if ((shbuff_sem_mtx = sem_open(sem_mtx_name, O_CREAT, 0660, 0))
+            == SEM_FAILED){
+        perror("sem_open");
+        goto Exit;
+    }
+
+    errno = 0;
+    if(shm_unlink(shm_name) == -1) {
+        // That is fine, we don't want
+        if (errno == ENOENT) {
+            dbg_print("no entry for the shm_name");
+        }
+    }
+
     // Thread sets up a shm buffer for sentences consumer will take.
     errno = 0;
-    shm_fd = shm_open(shm_name, O_RDWR | O_CREAT, 0660);
+    shm_fd = shm_open(shm_name, O_RDWR | O_CREAT | O_EXCL, 0660);
     if (shm_fd == -1) {
         if (errno == EEXIST) {
-            print_error("Shm file object already exists. Cleaning it up to retry.");]
+            print_error("Shm file object already exists. Cleaning it up to retry.");
             shm_unlink(shm_name);
         }
 
         perror("shm_open");
-        goto ThreadFail;
+        goto Exit;
     }
 
-    if(ftruncate(shm_fd, SHARED_BUFFER_SIZE)) {
 
+    // Resize our shared memory region.
+    dbg_print("Calling ftruncate from thread");
+    if(ftruncate(shm_fd, (off_t)SHARED_BUFFER_SIZE) == -1) {
+        if (errno == EBADF || errno == EINVAL) {
+            print_error("THREAD: bad fd not open for writing");
+        }
+        perror("ftruncate");
+        goto Exit;
     }
 
-    void *shm_addr = mmap(NULL, SHARED_BUFFER_SIZE, PROT_READ | PROT_WRITE,
-            MAP_SHARED, shm_fd, 0);
+    dbg_print("ftruncate from thread success...");
+
+    dbg_print("Calling create_shared_buffer");
+    shm_addr = create_shared_buffer(shm_fd, SHARED_BUFFER_SIZE);
     if (shm_addr == MAP_FAILED) {
         perror("mmap");
-        return EXIT_FAILURE;
+        goto Exit;
     }
 
-    // Processing happens in here...
+    dbg_print("create_shared_buffer called success.");
 
-
+    for (;;) {
+        dbg_print("In infinite loop");
+        if (squeue_dequeue(sq, temp_line)) {
+            printf("[+] Successfully read line out of queue: %s\n", temp_line);
+        }
+    //  pthread mtx lock(sq)
+    //  get item from shared queue
+    //  pthread mtx unlock
+    //
+    //  if (!holding sem_mtx)
+    //      sem_wait()
+    //
+    //  pack shared buffer with sentences.
+    //
+    //  if buff remaining space < 256
+    //      sem_post()
+    }
 
 
     if (munmap(shm_addr, SHARED_BUFFER_SIZE) == -1) {
         perror("munmap");
-        return EXIT_FAILURE;
-
+        goto Exit;
     }
 
-    return EXIT_SUCCESS;
+Exit:
 
-ThreadFail;
+    shm_unlink(shm_name);
     if (shm_fd) close(shm_fd);
-
-    return EXIT_FAILURE;
-
+    return NULL;
 }
 
 
@@ -118,9 +175,25 @@ int main(int argc, char **argv) {
     unsigned long int shared_buff_count = 0;
     char *bad_char = NULL;
     int shm_fd = 0;
+    void *shm_addr = NULL;
+
+    // Signal handler.
+    struct sigaction sa = {
+        .sa_handler = signal_handler,
+        .sa_flags = SA_RESTART,
+    };
+
+    // Mutex semaphore for sharing the shm_mgr_t struct betweeen processes.
+    /* sem_t *ms_shm_mgr = NULL; */
+
+    // tp references the little thread pool we create.
+    pthread_t *tp = NULL;
 
     // Will store the line we read from the file.
     char line[MAX_LINE_SIZE] = {0};
+
+    // Concurrency safe sentence queue.
+    squeue_t *s_queue = NULL;
 
     if (argc != 3) {
         print_usage(argv[0]);
@@ -149,14 +222,20 @@ int main(int argc, char **argv) {
     }
 
 
-    // TODO: Make sure file isn't empty.
-    // TODO: Setup signal handler.
+    // Setup signal handler.
+    sigemptyset(&sa.sa_mask);
+    if (sigaction(SIGINT, &sa, NULL) == -1) {
+        perror("sigaction");
+        goto ExitFail;
+    }
 
+
+    // TODO: Add Mtx Semaphore;
 
     // Get shm_fd for shm_mgr. This object keeps some book-keeping about shared buffers.
     // TODO: Explain MORE
     errno = 0;
-    shm_fd = shm_open(SHM_MGR_NAME, O_RDWR | O_CREAT, 0660);
+    shm_fd = shm_open(SHM_MGR_NAME, O_RDWR | O_CREAT | O_EXCL, 0660);
     if (shm_fd == -1) {
         if (errno == EEXIST) {
             // TODO: We need root to cleanup shm. Check uid and let user know.
@@ -172,7 +251,11 @@ int main(int argc, char **argv) {
     dbg_print("Shared memory for shm_mgr opened successfully");
 
     // Set shm_mgr shared memory region size.
+    errno = 0;
     if (ftruncate(shm_fd, sizeof(struct shm_mgr_t)) == -1) {
+        if ((errno  == EINVAL) || (errno == EBADF)) {
+            fprintf(stderr, "[!] ftruncate fd not open for writing\n");
+        }
         perror("ftruncate");
         return EXIT_FAILURE;
     }
@@ -182,12 +265,12 @@ int main(int argc, char **argv) {
     dbg_print("Time to mmap()");
 
     // The consumer will map this as well to know how many buffers will be shared.
-    void *shm_addr = mmap(NULL, sizeof(shm_mgr_t), PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+    shm_addr = mmap(NULL, sizeof(shm_mgr_t), PROT_READ | PROT_WRITE,
+            MAP_SHARED, shm_fd, 0);
     if (shm_addr == MAP_FAILED) {
         perror("mmap");
         return EXIT_FAILURE;
     }
-    // No longer needed.
     close(shm_fd);
 
     // TODO: Add lock semaphore here
@@ -199,8 +282,12 @@ int main(int argc, char **argv) {
     // TODO: Unlock sem
 
     // Create thread pool. One thread per shared buffer.
-    pthread_t *tp = NULL;
     tp = calloc(sm->sb_count, sizeof(pthread_t));
+    if (tp == NULL) {
+        perror("calloc");
+        goto ExitFail;
+    }
+
     for (size_t i = 0; i < sm->sb_count; i++) {
         printf("starting thread %zu\n", i);
         int ret = pthread_create(&tp[i], NULL, shm_worker_thread, (void *)i);
@@ -211,8 +298,15 @@ int main(int argc, char **argv) {
     }
 
     dbg_print("All threads created");
+    dbg_print("Initialize squeue");
+    // Initilize our sentence queue.
+    s_queue = squeue_init();
+    if (s_queue == NULL) {
+        fprintf(stderr, "[!] Could not create sentence queue!\n");
+        goto ExitFail;
+    }
 
-    dbg_print("process file data");
+    dbg_print("Queue initialized");
 
     // Will use fgets() as opposed to getline() because we are setting strict requirements
     // for line size.
@@ -224,6 +318,7 @@ int main(int argc, char **argv) {
         }
 
         // 1. Create new sqnode
+        squeue_enqueue(s_queue, line);
         // 2. Acquire MTX
         // 3. enqueue_sentence(sqnode)
         // 4. Unlock MTX
@@ -233,7 +328,7 @@ int main(int argc, char **argv) {
         printf("%s\n", line);
 
         // Clear line buffer for new sentence.
-        memset(line, sizeof(line), '\0');
+        memset(line, '\0', sizeof(line));
 
     }
 
@@ -248,14 +343,15 @@ int main(int argc, char **argv) {
     }
     clearerr(input_file);
 
+
     // Join all created threads.
     for (size_t i = 0; i < sm->sb_count; i++) {
         pthread_join(tp[i], NULL);
     }
 
-    dbg_print("threads all finished");
+    squeue_destroy(sq);
 
-    dbg_print("cleaning up");
+    dbg_print("threads all finished");
 
     // Clean up.
     shm_unlink(SHM_MGR_NAME);
@@ -266,7 +362,6 @@ int main(int argc, char **argv) {
         perror("munmap");
         return EXIT_FAILURE;
     }
-
 
     return EXIT_SUCCESS;
 
