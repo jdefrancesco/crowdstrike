@@ -18,23 +18,27 @@ static pthread_mutex_t queue_lock;
 sqnode_t * new_sqnode(char *sentence_str)
 {
     size_t s_len = strlen(sentence_str);
-    if (s_len > (MAX_SENTENCE_LENGTH+1)) {
+    if (s_len > MAX_SENTENCE_LENGTH) {
         fprintf(stderr, "[!] String of size %zu exceeds maximum.\n",
                 strlen(sentence_str));
         return NULL;
     }
 
-    if (sentence_str[s_len] != '\0') {
-        sentence_str[s_len] = '\0';
-        dbg_print("Added missing nul delimiter in sentence_str\n");
-    }
+    fprintf(stderr, CYAN "[new_sqnode] s_len = %zu\n" RESET, s_len);
+    fprintf(stderr, CYAN "[new_sqnode] sentence_str[s_len] = %c\n" RESET, sentence_str[s_len]);
+    /* if (sentence_str[s_len] != '\0') { */
+    /*     sentence_str[s_len] = '\0'; */
+    /*     dbg_print("Added missing nul delimiter in sentence_str\n"); */
+    /* } */
 
     sqnode_t *node = calloc(1, sizeof(sqnode_t));
-    strncpy(node->sentence, sentence_str, MAX_SENTENCE_LENGTH-1);
+    // Maybe memcpy instead?
+    strncpy(node->sentence, sentence_str, MAX_SENTENCE_LENGTH);
     // Make sure we add our null delimiter.
     node->sentence[MAX_SENTENCE_LENGTH] = '\0';
     return node;
 }
+
 
 
 // Create squeue, our sentence queue.
@@ -60,6 +64,7 @@ squeue_t * squeue_init(void)
 }
 
 
+
 // Add sentence node to the back of the queue.
 bool squeue_enqueue(squeue_t *q, char *sentence_str)
 {
@@ -69,11 +74,11 @@ bool squeue_enqueue(squeue_t *q, char *sentence_str)
         return false;
     }
 
-    strncpy(tmp_node->sentence, sentence_str, MAX_SENTENCE_LENGTH-1);
-    // Append null delimiter if one is not found.
-    if (tmp_node->sentence[MAX_SENTENCE_LENGTH] != '\0') {
-        tmp_node->sentence[MAX_SENTENCE_LENGTH] = '\0';
-    }
+    /* strncpy(tmp_node->sentence, sentence_str, MAX_SENTENCE_LENGTH-1); */
+    /* // Append null delimiter if one is not found. */
+    /* if (tmp_node->sentence[MAX_SENTENCE_LENGTH] != '\0') { */
+    /*     tmp_node->sentence[MAX_SENTENCE_LENGTH] = '\0'; */
+    /* } */
 
     // Entering critical section.
     pthread_mutex_lock(q->lock);
@@ -89,11 +94,16 @@ bool squeue_enqueue(squeue_t *q, char *sentence_str)
         q->back = tmp_node;
         q->entry_count++;
     }
+
+    fprintf(stderr, BLUE "[SQUEUE ENQUEUE TMP NODE DEBUG]" RESET);
+    fprintf(stderr, "[squeue_enqueue] tmp->sentence = %s\n", tmp_node->sentence);
+    fprintf(stderr, "[squeue_enqueue] tmp->next = %p\n", tmp_node->next);
     pthread_mutex_unlock(q->lock);
     // End critical section.
 
     return true;
 }
+
 
 
 // Remove an element from the queue and place it in sentence_buff.
@@ -102,17 +112,18 @@ bool squeue_dequeue(squeue_t *q, char *sentence_buff)
     // Enter critical section.
     pthread_mutex_lock(q->lock);
     if (q->front == NULL) {
-        fprintf(stderr, "[!] Nothing on queue!\n");
-        q->is_empty = true;
-        goto ExitFail;
+        assert(q->is_empty == true);
+        // Unlock before we return.
+        pthread_mutex_unlock(q->lock);
+        goto ExitQueueEmpty;
     }
 
     sqnode_t *tmp_node = q->front;
+
     q->front = q->front->next;
-
-    if (q->front == NULL)
+    if (q->front == NULL) {
         q->back = NULL;
-
+    }
     q->entry_count--;
     if (q->entry_count == 0) {
         q->is_empty = true;
@@ -123,20 +134,28 @@ bool squeue_dequeue(squeue_t *q, char *sentence_buff)
     // Fill sentence_t with the data.
     tmp_node->next = NULL;
     size_t len = strlen(tmp_node->sentence);
+
+    fprintf(stderr, RED "[squeue_dequeue] line: %s, length = %zu\n" RESET, tmp_node->sentence, len);
+
     if (len > MAX_SENTENCE_LENGTH) {
-        fprintf(stderr, "[WARNING] Sentence length too large. Truncating.\n");
+        fprintf(stderr, RED "[WARNING]" RESET " Sentence length too large. Truncating.\n");
         len = MAX_SENTENCE_LENGTH;
     } else {
-        strncpy(sentence_buff, tmp_node->sentence, len);
+        fprintf(stderr, GREEN "[WARNING] Copying sentence to sentence_buff\n" RESET);
+        strncpy(sentence_buff, tmp_node->sentence, MAX_LINE_SIZE);
+
+        fprintf(stderr, "tmp_node->sentence = %s\n", tmp_node->sentence);
+        fprintf(stderr, YELLOW "sentence_buff: %s\n" RESET, sentence_buff);
+        /* sentence_buff[strlen(sentence_buff)] = '\0'; */
     }
 
     free(tmp_node);
     return true;
 
-ExitFail:
-    pthread_mutex_unlock(q->lock);
+ExitQueueEmpty:
     return false;
 }
+
 
 
 // Return number of elements in the queue.
@@ -149,9 +168,11 @@ size_t squeue_count(const squeue_t *q)
     return t_entry_count;
 }
 
+
+
 // Set finished queue field member as a signal to consuming
 // threads that nothing more will go onto queue.
-void squeue_setfinished(const squeue_t *q)
+void squeue_setfinished(squeue_t *q)
 {
     pthread_mutex_lock(q->lock);
     q->finished = true;
@@ -159,8 +180,9 @@ void squeue_setfinished(const squeue_t *q)
 }
 
 
-// Set finished flag.
-bool squeue_done(const squeue_t *)
+
+// Check if the queue has retired.
+bool squeue_done(const squeue_t *q)
 {
     bool finished = false;
     pthread_mutex_lock(q->lock);
@@ -169,6 +191,7 @@ bool squeue_done(const squeue_t *)
 
     return finished;
 }
+
 
 
 // Destructor for queue.

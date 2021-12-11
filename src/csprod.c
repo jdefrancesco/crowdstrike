@@ -81,7 +81,7 @@ shm_worker_thread(void *arg) {
     char temp_line[MAX_LINE_SIZE] = {0};
 
     // If fail to dequeue 10 times, break loop
-    size_t queue_fail = 0;
+    /* size_t queue_fail = 0; */
     sentence_t *s = NULL;
 
     // Construct sem mutex name.
@@ -95,13 +95,14 @@ shm_worker_thread(void *arg) {
         perror("sem_open");
         goto Exit;
     }
+
     // We start off holding the sem.
     holding_sem_mtx = true;
 
     if(shm_unlink(shm_name) == -1) {
         // That is fine, we don't want an entry.
         if (errno == ENOENT) {
-           fprintf(stder, "[!] No shm entry, creating a new one.\n");
+           fprintf(stderr, "[!] No shm entry, creating a new one.\n");
         }
     }
 
@@ -117,12 +118,8 @@ shm_worker_thread(void *arg) {
         goto Exit;
     }
 
-
     // Resize our shared memory region.
     if(ftruncate(shm_fd, (off_t)SHARED_BUFFER_SIZE) == -1) {
-        if (errno == EBADF || errno == EINVAL) {
-            print_error("THREAD: bad fd not open for writing");
-        }
         perror("ftruncate");
         goto Exit;
     }
@@ -138,9 +135,17 @@ shm_worker_thread(void *arg) {
     shm_buff = (uint8_t *) shm_addr;
     memset(shm_buff, 0x0, SHARED_BUFFER_SIZE);
 
-    // Remember, on first entrance, we hold the semaphore.
-    // Rather sloppy, complex loop. Lacked the time to tidy things up.
+    // This loop takes strings off the queue, and attempts to place them
+    // into a finite size buffer of size 1024, the strings may be of variable
+    // length. We can view see this problem as a special case of bin packing.
+    // Bin-packing is NP=Complete so heuristics are our best tool for obtaining
+    // effciency. This is complicated by the fact we are implementing an "on-line"
+    // solution. We don't have a global view of everything before hand. If we did,
+    // we could use some variant of "first-fit decreasing" heuristic. This isn't
+    // the case for us.
     for (;;) {
+
+        // NOTE: We enter loop holding the semaphore
 
         // Try to dequeue a sentence/line from main thread.
         if (!squeue_dequeue(sq, temp_line)) {
@@ -149,18 +154,19 @@ shm_worker_thread(void *arg) {
                 printf("[+] No more items to process.\n");
                 break;
             }
-            queue_fail++;
-            if (queue_fail == 10) {
-                fprintf(stderr, "[!] Failed to dequeue > threshold.\n");
-                break;
-            }
+            /* queue_fail++; */
+            /* if (queue_fail == 10) { */
+                /* fprintf(stderr, "[!] Failed to dequeue > threshold.\n"); */
+                /* break; */
+            /* } */
         }
-        dbg_print("Grabbed item off queue.");
+
+        fprintf(stderr, GREEN "[DEQUEUE] Got item off queue. Queue item: %s\n" RESET, temp_line);
 
         // If we aren't currently holding the semaphore, we wait on other process to finish
         // up the work it needs to do on shared buffer before we have control again.
         if (!holding_sem_mtx) {
-            dbg_print("calling sem_wait() to get buffer sem.")
+            dbg_print("calling sem_wait() to get buffer sem.");
             if(sem_wait(sem_mtx) == - 1) {
                 perror("sem_wait");
                 break;
@@ -183,7 +189,8 @@ shm_worker_thread(void *arg) {
         dbg_print("processing the dequeue line we got for sentence_t");
         if ((strlen(temp_line) > MAX_SENTENCE_LENGTH) ||
                 (strlen(temp_line) == 0)) {
-            printf("[+] Line from queue exceeds maximum sentence length or is zero. Dropping.\n");
+            fprintf(stderr, "[+] Line from queue exceeds maximum "
+                    "sentence length or is zero. Dropping. length = %zu\n", strlen(temp_line));
             memset(temp_line, 0x0, sizeof(temp_line));
             continue;
         } else {

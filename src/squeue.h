@@ -67,6 +67,6 @@ void squeue_setfinished(squeue_t *q);
 
 // Returns true if the finished flag is set. This means no
 // more data will be placed on queue by main thread.
-bool squeue_done(squeue_t *q);
+bool squeue_done(const squeue_t *q);
 
 #endif
