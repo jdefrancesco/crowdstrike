@@ -39,7 +39,7 @@
 
 /* Holds a sentence which can be placed in a shared buffer. */
 typedef struct sentence_t {
-    unsigned long sentence_length; // Length of sentence (Maximum size of 247)
+    unsigned long sentence_length; // Length of sentence (Maximum size of 248 b/c null)
 
     char sentence[];               // Flex array member with actual sentence data. Max length is 247.
                                    // bytes but we don't want to allocate what we don't need.

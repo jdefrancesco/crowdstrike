@@ -59,6 +59,7 @@ signal_handler(int sig)
 {
     (void) sig;
     // Signal handler.
+    // Gracefully stop all threads and quit.
 }
 
 static void *
@@ -144,21 +145,11 @@ shm_worker_thread(void *arg) {
     // we could use some variant of "first-fit decreasing" heuristic. This isn't
     // the case for us.
     for (;;) {
-
         // NOTE: We enter loop holding the semaphore
 
         // Try to dequeue a sentence/line from main thread.
         if (!squeue_dequeue(sq, temp_line)) {
-            printf("[+] Queue is currently empty.\n");
-            if (squeue_done(sq)) {
-                printf("[+] No more items to process.\n");
-                break;
-            }
-            /* queue_fail++; */
-            /* if (queue_fail == 10) { */
-                /* fprintf(stderr, "[!] Failed to dequeue > threshold.\n"); */
-                /* break; */
-            /* } */
+            if (squeue_done(sq)) break;
         }
 
         fprintf(stderr, GREEN "[DEQUEUE] Got item off queue. Queue item: %s\n" RESET, temp_line);
@@ -186,7 +177,7 @@ shm_worker_thread(void *arg) {
             memset(shm_buff, 0x0, SHARED_BUFFER_SIZE);
         }
 
-        dbg_print("processing the dequeue line we got for sentence_t");
+
         if ((strlen(temp_line) > MAX_SENTENCE_LENGTH) ||
                 (strlen(temp_line) == 0)) {
             fprintf(stderr, "[+] Line from queue exceeds maximum "
@@ -204,13 +195,12 @@ shm_worker_thread(void *arg) {
 
         // sentence_length does NOT include the null terminator.
         s->sentence_length = strlen(temp_line);
-        strncpy(s->sentence, temp_line, s->sentence_length+1);
+        strncpy(s->sentence, temp_line, s->sentence_length);
         memset(temp_line, 0x0, sizeof(temp_line));
 
         // Ensure nul termination.
         s->sentence[s->sentence_length] = '\0';
-
-        // Total number of bytes for sentence_t
+        // Total number of bytes for sentence_t (+1 for null char)
         size_t s_tb = (sizeof(sentence_t) + s->sentence_length + 1);
 
         dbg_print("putting sentence in shared buffer...");
@@ -220,7 +210,6 @@ shm_worker_thread(void *arg) {
         // If we have less than 256 bytes less. Just release mutex
         // for consumer to process.
         if (shm_bytes_avail < MAX_LINE_SIZE) {
-
             // For debugging...
             hex_dump((uint8_t *)shm_buff, SHARED_BUFFER_SIZE);
             if(sem_post(sem_mtx) == -1) {
@@ -231,6 +220,9 @@ shm_worker_thread(void *arg) {
         }
 
     }
+
+    // Debug, check out contents in the shared buffer.
+    hex_dump(shm_buff, SHARED_BUFFER_SIZE);
 
     // Clean up.
     if (holding_sem_mtx) {
@@ -272,6 +264,11 @@ int main(int argc, char **argv) {
     // Mutex semaphore for sharing the shm_mgr_t struct betweeen processes.
     /* sem_t *ms_shm_mgr = NULL; */
 
+
+    // Make sure stdio is line buffered only up to one line.
+    setvbuf(stdout, NULL, _IOLBF, 0);
+
+
     // Signal handler.
     struct sigaction sa = {
         .sa_handler = signal_handler,
@@ -284,6 +281,7 @@ int main(int argc, char **argv) {
         perror("sigaction");
         goto ExitFail;
     }
+
 
     if (argc != 3) {
         print_usage(argv[0]);
@@ -382,12 +380,11 @@ int main(int argc, char **argv) {
 
     // Process input file one line at a time.
     while(fgets(line, sizeof(line), input_file) != NULL) {
-        // Strip off new line
         char *nl = strchr(line, '\n');
         if (nl) {
             *nl = '\0';
         }
-        printf("%s\n", line);
+        printf(YELLOW "Main loop: %s\n" RESET, line);
 
         if(!squeue_enqueue(sq, line)) {
             fprintf(stderr, "[!] Failed to add line to queue!\n");

@@ -25,14 +25,12 @@ sqnode_t * new_sqnode(char *sentence_str)
     }
 
     fprintf(stderr, CYAN "[new_sqnode] s_len = %zu\n" RESET, s_len);
-    fprintf(stderr, CYAN "[new_sqnode] sentence_str[s_len] = %c\n" RESET, sentence_str[s_len]);
     /* if (sentence_str[s_len] != '\0') { */
     /*     sentence_str[s_len] = '\0'; */
     /*     dbg_print("Added missing nul delimiter in sentence_str\n"); */
     /* } */
 
     sqnode_t *node = calloc(1, sizeof(sqnode_t));
-    // Maybe memcpy instead?
     strncpy(node->sentence, sentence_str, MAX_SENTENCE_LENGTH);
     // Make sure we add our null delimiter.
     node->sentence[MAX_SENTENCE_LENGTH] = '\0';
