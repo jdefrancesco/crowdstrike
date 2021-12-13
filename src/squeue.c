@@ -31,9 +31,11 @@ sqnode_t * new_sqnode(char *sentence_str)
     /* } */
 
     sqnode_t *node = calloc(1, sizeof(sqnode_t));
+    node->next = NULL;
     strncpy(node->sentence, sentence_str, MAX_SENTENCE_LENGTH);
     // Make sure we add our null delimiter.
     node->sentence[MAX_SENTENCE_LENGTH] = '\0';
+    fprintf(stderr, GREEN "[After new_sqnode strncpy] node->sentence = %s\n" RESET, node->sentence);
     return node;
 }
 
@@ -122,6 +124,7 @@ bool squeue_dequeue(squeue_t *q, char *sentence_buff)
     if (q->front == NULL) {
         q->back = NULL;
     }
+    // Decrease entry count.
     q->entry_count--;
     if (q->entry_count == 0) {
         q->is_empty = true;

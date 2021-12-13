@@ -149,7 +149,10 @@ shm_worker_thread(void *arg) {
 
         // Try to dequeue a sentence/line from main thread.
         if (!squeue_dequeue(sq, temp_line)) {
-            if (squeue_done(sq)) break;
+            if (squeue_done(sq)) {
+                break;
+            }
+            continue;
         }
 
         fprintf(stderr, GREEN "[DEQUEUE] Got item off queue. Queue item: %s\n" RESET, temp_line);
@@ -205,13 +208,22 @@ shm_worker_thread(void *arg) {
 
         dbg_print("putting sentence in shared buffer...");
         memcpy(shm_buff, (uint8_t *)s, s_tb);
+        free(s);
+
+        shm_buff += (uintptr_t) s_tb;
         shm_bytes_avail -= s_tb;
+
+        fprintf(stderr, "shm_buff = %p\n", shm_buff);
 
         // If we have less than 256 bytes less. Just release mutex
         // for consumer to process.
         if (shm_bytes_avail < MAX_LINE_SIZE) {
             // For debugging...
+            dbg_print("Out of space in buffer...");
+
+            shm_buff = (uint8_t *) shm_addr;
             hex_dump((uint8_t *)shm_buff, SHARED_BUFFER_SIZE);
+            dbg_print("release sem");
             if(sem_post(sem_mtx) == -1) {
                 perror("sem_post");
                 break;
@@ -222,7 +234,7 @@ shm_worker_thread(void *arg) {
     }
 
     // Debug, check out contents in the shared buffer.
-    hex_dump(shm_buff, SHARED_BUFFER_SIZE);
+    hex_dump((uint8_t *)shm_addr, SHARED_BUFFER_SIZE);
 
     // Clean up.
     if (holding_sem_mtx) {
