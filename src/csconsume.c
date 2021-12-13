@@ -20,6 +20,7 @@
 #include "cpcommon.h"
 #include "dbg.h"
 
+static void * shm_worker_thread(void *arg);
 
 
 int main(int argc, char **argv) {
@@ -71,6 +72,7 @@ int main(int argc, char **argv) {
         goto ExitFail;
     }
 
+    // Map in shm_mgr_t....
     sm = (shm_mgr_t *) mmap(NULL, sizeof(shm_mgr_t), PROT_READ | PROT_WRITE,
             MAP_SHARED, shm_fd, 0);
     if (sm == MAP_FAILED) {
@@ -80,19 +82,21 @@ int main(int argc, char **argv) {
     }
 
 
-    // Now we should be able to access shm_mgr_t.
+    // Let producer know we are ready, they can fill shm_mgr_t struct.
     if (sem_post(sem_mtx) == -1) {
         perror("sem_post");
         goto ExitFail;
     }
-    printf("[+] Activating producer");
+
+    printf("[+] Activating producer..\n");
 
     if (sem_wait(sem_mtx) == -1) {
         perror("sem_wait");
         goto ExitFail;
     }
 
-    dbg_print("consumer past second sem_wait");
+    dbg_print("consumer ready to validate producers shm_mgr_t data");
+
     sm = (shm_mgr_t *) shm_addr;
     // Make sure the producer process and consumer process use the same number
     // of shared buffers for information exchange.
@@ -103,8 +107,6 @@ int main(int argc, char **argv) {
                 shared_buff_count);
         goto ExitFail;
     }
-
-
     printf("[+] Producer and consumer processes agreed on the same buffer count\n");
 
     if (sem_post(sem_mtx) == -1) {
@@ -113,12 +115,37 @@ int main(int argc, char **argv) {
     }
 
 
+    // Allocate space for thread pool.
+    tp = calloc(sm->sb_count, sizeof(pthread_t));
+    if (tp == NULL) {
+        perror("calloc");
+        goto ExitFail;
+    }
+    // Create thread pool. One thread per shared buffer.
+    for (size_t i = 0; i < sm->sb_count; i++) {
+        int ret = pthread_create(&tp[i], NULL, shm_worker_thread, (void *)i);
+        if (ret != 0) {
+            print_error("Problem creating a thread.");
+            goto ExitFail;
+        }
+    }
 
-    // Spawn threads
+
+    printf("[+] Waiting for threads to finish...\n");
+
+    for (size_t i = 0; i < shared_buff_count; i++) {
+        pthread_join(tp[i], NULL);
+    }
 
 
-    dbg_print("done...");
+
+    printf("[+] Finished....\n");
     shm_unlink(SHM_MGR_NAME);
+
+    free(tp);
+    tp = NULL;
+
+    close(shm_fd);
 
     if (munmap(shm_addr, sizeof(shm_mgr_t)) == -1) {
         perror("munmap");
@@ -126,10 +153,19 @@ int main(int argc, char **argv) {
         goto ExitFail;
     }
 
+
     return EXIT_SUCCESS;
 
 ExitFail:
     if (shm_fd) shm_unlink(SHM_MGR_NAME);
     if (shm_addr) munmap(shm_addr, sizeof(shm_mgr_t));
     return EXIT_FAILURE;
+}
+
+
+
+static void *
+shm_worker_thread(void *arg) {
+
+
 }
