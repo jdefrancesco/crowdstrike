@@ -5,6 +5,15 @@
 #include "cpcommon.h"
 #include "dbg.h"
 
+// Used for debugging.
+void
+print_error(const char *err_msg)
+{
+    assert(err_msg != NULL);
+    // ANSI Color macros are in dbg.h
+    fprintf(stderr, RED "[!] ERROR:" RESET " %s\n", err_msg);
+    return;
+}
 
 // Creates a shared memory buffer via call to mmap identified
 // by our POSIX shm file descriptor, our IPC mechanism of choice.

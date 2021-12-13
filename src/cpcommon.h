@@ -10,6 +10,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <semaphore.h>
 
 #include <unistd.h>
 #include <pthread.h>
@@ -55,6 +56,7 @@ typedef struct sentence_t {
 typedef struct shm_mgr_t {
    size_t sb_count;          // The number of shared buffers (supplied by user).
    size_t buffer_idx;        // Buffer currently being accessed.
+   bool consumer_proc_ready;
 } shm_mgr_t;
 
 
@@ -78,5 +80,8 @@ void * create_shared_buffer(int shm_fd, size_t buff_size);
 // Hex dump a buffer of data. Will use this to debug if I need to see
 // contents of shared buffer.
 void hex_dump(const uint8_t *data, size_t size);
+
+// Print colorful errors
+void print_error(const char *err_msg);
 
 #endif // __CPCOMMON_H

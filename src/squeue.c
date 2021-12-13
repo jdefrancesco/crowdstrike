@@ -24,18 +24,12 @@ sqnode_t * new_sqnode(char *sentence_str)
         return NULL;
     }
 
-    fprintf(stderr, CYAN "[new_sqnode] s_len = %zu\n" RESET, s_len);
-    /* if (sentence_str[s_len] != '\0') { */
-    /*     sentence_str[s_len] = '\0'; */
-    /*     dbg_print("Added missing nul delimiter in sentence_str\n"); */
-    /* } */
 
     sqnode_t *node = calloc(1, sizeof(sqnode_t));
     node->next = NULL;
     strncpy(node->sentence, sentence_str, MAX_SENTENCE_LENGTH);
     // Make sure we add our null delimiter.
     node->sentence[MAX_SENTENCE_LENGTH] = '\0';
-    fprintf(stderr, GREEN "[After new_sqnode strncpy] node->sentence = %s\n" RESET, node->sentence);
     return node;
 }
 
@@ -74,12 +68,6 @@ bool squeue_enqueue(squeue_t *q, char *sentence_str)
         return false;
     }
 
-    /* strncpy(tmp_node->sentence, sentence_str, MAX_SENTENCE_LENGTH-1); */
-    /* // Append null delimiter if one is not found. */
-    /* if (tmp_node->sentence[MAX_SENTENCE_LENGTH] != '\0') { */
-    /*     tmp_node->sentence[MAX_SENTENCE_LENGTH] = '\0'; */
-    /* } */
-
     // Entering critical section.
     pthread_mutex_lock(q->lock);
     // Check is queue is empty. Both front/back pointers now point to it.
@@ -95,9 +83,6 @@ bool squeue_enqueue(squeue_t *q, char *sentence_str)
         q->entry_count++;
     }
 
-    fprintf(stderr, BLUE "[SQUEUE ENQUEUE TMP NODE DEBUG]" RESET);
-    fprintf(stderr, "[squeue_enqueue] tmp->sentence = %s\n", tmp_node->sentence);
-    fprintf(stderr, "[squeue_enqueue] tmp->next = %p\n", tmp_node->next);
     pthread_mutex_unlock(q->lock);
     // End critical section.
 
@@ -136,7 +121,6 @@ bool squeue_dequeue(squeue_t *q, char *sentence_buff)
     tmp_node->next = NULL;
     size_t len = strlen(tmp_node->sentence);
 
-    fprintf(stderr, RED "[squeue_dequeue] line: %s, length = %zu\n" RESET, tmp_node->sentence, len);
 
     if (len > MAX_SENTENCE_LENGTH) {
         fprintf(stderr, RED "[WARNING]" RESET " Sentence length too large. Truncating.\n");
@@ -144,10 +128,6 @@ bool squeue_dequeue(squeue_t *q, char *sentence_buff)
     } else {
         fprintf(stderr, GREEN "[WARNING] Copying sentence to sentence_buff\n" RESET);
         strncpy(sentence_buff, tmp_node->sentence, MAX_LINE_SIZE);
-
-        fprintf(stderr, "tmp_node->sentence = %s\n", tmp_node->sentence);
-        fprintf(stderr, YELLOW "sentence_buff: %s\n" RESET, sentence_buff);
-        /* sentence_buff[strlen(sentence_buff)] = '\0'; */
     }
 
     free(tmp_node);

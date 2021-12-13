@@ -11,7 +11,7 @@ all: csprod csconsume
 csprod: csprod.c cpcommon.c squeue.c
 	$(CC) $(CFLAGS) $^ -o $@
 
-csconsume: csconsume.c
+csconsume: csconsume.c cpcommon.c
 	$(CC) $(CFLAGS) $^ -o $@
 
 
