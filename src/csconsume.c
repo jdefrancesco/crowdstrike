@@ -21,6 +21,8 @@
 #include "dbg.h"
 
 static void * shm_worker_thread(void *arg);
+static bool process_buffer(uint8_t *buff);
+static bool valid_ascii(uint8_t *buff);
 
 
 int main(int argc, char **argv) {
@@ -137,9 +139,9 @@ int main(int argc, char **argv) {
         pthread_join(tp[i], NULL);
     }
 
-
-
     printf("[+] Finished....\n");
+
+
     shm_unlink(SHM_MGR_NAME);
 
     free(tp);
@@ -164,8 +166,88 @@ ExitFail:
 
 
 
+// Worker thread that consumes what the corresponding thread of
+// csprod creates. Additionally it must validate the shared buffer contents
+// and determine if it contains the sub-string we are looking for.
 static void *
 shm_worker_thread(void *arg) {
 
+    size_t i = (size_t) arg;
+    int shm_fd = 0;
+    char shm_name[256] = {0};
+
+    void *shm_addr = NULL;
+    uint8_t * shm_buff = NULL;
+    size_t shm_bytes_avail = SHARED_BUFFER_SIZE;
+
+    // Semaphore mutex name used between two corresponding thread workers.
+    char sem_mtx_name[256] = {0};
+    sem_t *sem_mtx = NULL;
+    bool holding_sem_mtx = false;
+
+    sentence_t *s = NULL;
+
+    // We copy contents from shared buffer here before we start doing work.
+    // This lets us relinquish the semaphore so the producer can keep going.
+    uint8_t active_buffer[SHARED_BUFFER_SIZE] = {0};
+
+    // Construct sem mutex and shm names for communicating between processes.
+    snprintf(sem_mtx_name, (sizeof(sem_mtx_name)-1), SEM_MTX_THREAD "%zu", i);
+    snprintf(shm_name, (sizeof(shm_name)-1), SHM_THREAD_NAME "%zu", i);
+
+    // The producer thread will have sem_mtx when we start  off.
+    if ((sem_mtx = sem_open(sem_mtx_name, O_CREAT, 0666, 0))
+            == SEM_FAILED) {
+        perror("sem_open");
+        goto ExitErr;
+    }
+
+    // Acquire the shared memory buffer which will contain data we
+    // pass back and forth.
+    shm_fd = shm_open(SHM_MGR_NAME, O_RDWR, 0666);
+    if (shm_fd == -1) {
+        perror("shm_open");
+        goto ExitErr;
+    }
+
+    shm_addr = create_shared_buffer(shm_fd, SHARED_BUFFER_SIZE);
+    if (shm_addr == MAP_FAILED) {
+        perror("mmap");
+        goto ExitErr;
+    }
+    shm_buff = (uint8_t *) shm_addr;
+
+
+    while (true) {
+        if (!holding_sem_mtx) {
+            if (sem_wait(sem_mtx) == -1) {
+                perror("sem_wait");
+                break;
+            }
+            holding_sem_mtx = true;
+        }
+
+        // Get data in our processing buffer so we can relinquish the semaphore.
+        memcpy(active_buffer, shm_buff, SHARED_BUFFER_SIZE);
+        // Clearing the entire buffer indicates we have "processed" the data.
+        memset(shm_buff, 0x0, SHARED_BUFFER_SIZE);
+
+        // Give control back to producer while we validate things.
+        if (sem_post(sem_mtx) == -1) {
+            perror("sem_post");
+            goto ExitErr;
+        }
+
+        // Buffer should be filled, lets copy it out so
+        // we can give access back to producer
+
+    }
+
+
+    return NULL;
+
+ExitErr:
+
+    return NULL;
 
 }

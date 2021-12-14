@@ -53,7 +53,6 @@ int main(int argc, char **argv) {
     // Mutex semaphore for sharing the shm_mgr_t struct betweeen processes.
     sem_t *sem_mtx = NULL;
 
-
     // Make sure stdio is line buffered only up to one line.
     setvbuf(stdout, NULL, _IOLBF, 0);
 
@@ -98,10 +97,10 @@ int main(int argc, char **argv) {
     }
 
 
-    // Create smeaphore mutex, we will hold this initially. We use it to share
-    // the probably unecessary shm_mgr_t struct.
+    // Create smeaphore mutex, we will not hold this at the start.
+    // We will wait for the consumer.
     if ((sem_mtx = sem_open(SHM_MGR_MTX, O_CREAT,
-                    0660, 0)) == SEM_FAILED) {
+                    0666, 0)) == SEM_FAILED) {
         print_error("Error opening semaphore mutex SHM_MGR_MTX");
         goto ExitFail;
     }
@@ -129,7 +128,6 @@ int main(int argc, char **argv) {
         goto ExitFail;
     }
 
-
     // The consumer will map this as well to know how many buffers will be shared.
     shm_mgr_t *sm = (shm_mgr_t *)mmap(NULL, sizeof(shm_mgr_t), PROT_READ | PROT_WRITE,
             MAP_SHARED, shm_fd, 0);
@@ -137,6 +135,7 @@ int main(int argc, char **argv) {
         perror("mmap");
         goto ExitFail;
     }
+
 
     dbg_print("waiting for semaphore");
     // Initialize semaphore as process shared, value 0.
@@ -267,8 +266,6 @@ shm_worker_thread(void *arg) {
     // We dequeue a line from the queue into this temp buffer.
     char temp_line[MAX_LINE_SIZE] = {0};
 
-    // If fail to dequeue 10 times, break loop
-    /* size_t queue_fail = 0; */
     sentence_t *s = NULL;
 
     // Construct sem mutex name.
@@ -277,7 +274,7 @@ shm_worker_thread(void *arg) {
     snprintf(shm_name, (sizeof(shm_name)-1), SHM_THREAD_NAME "%zu", i);
 
     // Create sem mtx we use for sync. between different processes.
-    if ((sem_mtx = sem_open(sem_mtx_name, O_CREAT, 0666, 0))
+    if ((sem_mtx = sem_open(sem_mtx_name, O_CREAT, 0666, 1))
             == SEM_FAILED){
         perror("sem_open");
         goto Exit;
@@ -285,7 +282,6 @@ shm_worker_thread(void *arg) {
 
     // We start off holding the sem.
     holding_sem_mtx = true;
-
     if(shm_unlink(shm_name) == -1) {
         // That is fine, we don't want an entry.
         if (errno == ENOENT) {
@@ -293,8 +289,8 @@ shm_worker_thread(void *arg) {
         }
     }
 
-    // Thread sets up a shm buffer for sentences consumer will take.
-    shm_fd = shm_open(shm_name, O_RDWR | O_CREAT | O_EXCL, 0666);
+    shm_fd = shm_open(shm_name, O_RDWR | O_CREAT | O_EXCL,
+            S_IRUSR | S_IWUSR);
     if (shm_fd == -1) {
         if (errno == EEXIST) {
             print_error("Shm file object already exists. Cleaning it up to retry.");
@@ -325,12 +321,12 @@ shm_worker_thread(void *arg) {
     // This loop takes strings off the queue, and attempts to place them
     // into a finite size buffer of size 1024, the strings may be of variable
     // length. We can view see this problem as a special case of bin packing.
-    // Bin-packing is NP=Complete so heuristics are our best tool for obtaining
+    // Bin-packing is NP-Complete so heuristics are our best tool for obtaining
     // effciency. This is complicated by the fact we are implementing an "on-line"
     // solution. We don't have a global view of everything before hand. If we did,
     // we could use some variant of "first-fit decreasing" heuristic. This isn't
     // the case for us.
-    for (;;) {
+    while (true) {
         // NOTE: We enter loop holding the semaphore
 
         // Try to dequeue a sentence/line from main thread.
@@ -352,6 +348,8 @@ shm_worker_thread(void *arg) {
             }
             dbg_print("(csprod) producer thread gained access to buffer again\n");
             holding_sem_mtx = true;
+            // Rewind to beginning of buffer.
+            /* shm_buff = (uint8_t *)shm_addr; */
             // Means we have control of buffer.
             if (*shm_buff == '\0') {
                 // First byte of buffer is nul, we consider the buffer processed.
